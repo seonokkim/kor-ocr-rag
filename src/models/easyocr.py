@@ -30,15 +30,19 @@ class EasyOCRModel(BaseOCRModel):
         return results
         
     def postprocess(self, prediction_result: List[Tuple[List[List[int]], str, float]]) -> List[Tuple[str, List[float]]]:
-        """EasyOCR 예측 결과 후처리 (텍스트와 바운딩 박스 추출)"""
+        """EasyOCR 예측 결과 후처리 (텍스트와 바운딩 박스 추출 및 타입 변환)"""
         predictions = []
-        for bbox, text, confidence in prediction_result:
-            # 바운딩 박스를 [x1, y1, x2, y2] 형식으로 변환
-            x_coords = [p[0] for p in bbox]
-            y_coords = [p[1] for p in bbox]
-            bbox_x1y1x2y2 = [min(x_coords), min(y_coords), max(x_coords), max(y_coords)]
-            
-            predictions.append((text, bbox_x1y1x2y2))
+        if prediction_result is not None:
+            for (bbox, text, prob) in prediction_result:
+                # 바운딩 박스 좌표를 float 리스트로 변환
+                bbox_list = [[float(p[0]), float(p[1])] for p in bbox]
+                
+                # 바운딩 박스를 [x1, y1, x2, y2] 형식으로 변환 후 float 리스트로 변환
+                x_coords = [p[0] for p in bbox_list]
+                y_coords = [p[1] for p in bbox_list]
+                bbox_x1y1x2y2 = [float(min(x_coords)), float(min(y_coords)), float(max(x_coords)), float(max(y_coords))]
+                
+                predictions.append((text, bbox_x1y1x2y2))
         
         return predictions
 
