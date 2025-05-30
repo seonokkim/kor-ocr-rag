@@ -1,6 +1,5 @@
 # Data directories
 data/
-results/
 
 # Virtual Environment
 .venv/
@@ -64,4 +63,5 @@ logs/
 .coverage
 htmlcov/ 
 
+# Other files
 =*        

@@ -164,166 +164,48 @@ def plot_performance_comparison(df: pd.DataFrame, metric: str = 'item_accuracy')
     return plt
 
 def generate_performance_report(all_results: Dict[str, Any]) -> Dict[str, Any]:
-    """평가 결과를 분석하여 성능 보고서를 생성합니다."""
-    report = {
-        'overall_metrics': {},
-        'model_comparison': {},
-        'preprocessing_impact': {},
-        'detailed_metrics': {}
-    }
-    
-    # 전체 메트릭 계산을 위한 임시 저장소
-    overall_metrics_list = {
-        'item_accuracy': [],
-        'char_accuracy': [],
-        'inference_time': []
-        # text_similarity 메트릭은 나중에 처리
-    }
-    
-    # 상세 메트릭을 위한 임시 저장소
-    detailed_metrics_agg = {
-        'type_accuracies': {},
-        'region_accuracies': {},
-        'length_accuracies': {},
-        'size_accuracies': {},
-        'text_similarity': {
-            'normalized_levenshtein': [],
-            'rouge_scores': {'rouge-1': [], 'rouge-2': [], 'rouge-l': []},
-            'bleu_score': []
-        }
-    }
+    """평가 결과를 분석하여 성능 보고서를 생성하고 CSV로 저장합니다."""
+    report_list = []
     
     for config_key, result_data in all_results.items():
         config = result_data['config']
         metrics = result_data['metrics']
         
-        model_name = config['model_name']
-        preprocess_steps = config['preprocessing_steps']
-        preprocess_key = "_".join(preprocess_steps) if preprocess_steps else 'no_preprocessing'
-
-        # 모델별 성능 비교를 위한 데이터 수집
-        if model_name not in report['model_comparison']:
-            report['model_comparison'][model_name] = {
-                'item_accuracy': [],
-                'char_accuracy': [],
-                'inference_time': [],
-                'type_accuracies': {},
-                'region_accuracies': {},
-                'length_accuracies': {},
-                'size_accuracies': {},
-                'text_similarity': {
-                    'normalized_levenshtein': [],
-                    'rouge_scores': {'rouge-1': [], 'rouge-2': [], 'rouge-l': []},
-                    'bleu_score': []
-                }
-            }
+        row = {
+            'model_name': config['model_name'],
+            'preprocessing_steps': "_".join(config['preprocessing_steps']) if config['preprocessing_steps'] else 'no_preprocessing',
+            'item_accuracy': metrics.get('item_accuracy', 0),
+            'char_accuracy': metrics.get('char_accuracy', 0),
+            'inference_time': metrics.get('inference_time', 0),
+        }
         
-        report['model_comparison'][model_name]['item_accuracy'].append(metrics.get('item_accuracy', 0))
-        report['model_comparison'][model_name]['char_accuracy'].append(metrics.get('char_accuracy', 0))
-        report['model_comparison'][model_name]['inference_time'].append(metrics.get('inference_time', 0))
-        
-        # 추가 메트릭 수집
+        # 상세 메트릭 추가
         for metric_type in ['type', 'region', 'length', 'size']:
             metric_key = f'{metric_type}_accuracies'
             if metric_key in metrics:
                 for k, v in metrics[metric_key].items():
-                    if k not in report['model_comparison'][model_name][metric_key]:
-                        report['model_comparison'][model_name][metric_key][k] = []
-                    report['model_comparison'][model_name][metric_key][k].append(v)
-                    
-                    # 상세 메트릭 집계를 위한 수집
-                    if k not in detailed_metrics_agg[metric_key]:
-                         detailed_metrics_agg[metric_key][k] = []
-                    detailed_metrics_agg[metric_key][k].append(v)
+                    row[f'average_{metric_type}_{k}'] = v
 
-        # Text Similarity 메트릭 수집
+        # Text Similarity 메트릭 추가
         if 'text_similarity' in metrics:
             ts_metrics = metrics['text_similarity']
-            report['model_comparison'][model_name]['text_similarity']['normalized_levenshtein'].append(ts_metrics.get('normalized_levenshtein', 0))
+            row['average_normalized_levenshtein'] = ts_metrics.get('normalized_levenshtein', 0)
+            row['average_bleu_score'] = ts_metrics.get('bleu_score', 0)
             if 'rouge_scores' in ts_metrics:
                  for r_metric in ['rouge-1', 'rouge-2', 'rouge-l']:
-                     report['model_comparison'][model_name]['text_similarity']['rouge_scores'][r_metric].append(ts_metrics['rouge_scores'].get(r_metric, 0))
-                     # 상세 메트릭 집계를 위한 수집
-                     if r_metric not in detailed_metrics_agg['text_similarity']['rouge_scores']:
-                         detailed_metrics_agg['text_similarity']['rouge_scores'][r_metric] = []
-                     detailed_metrics_agg['text_similarity']['rouge_scores'][r_metric].append(ts_metrics['rouge_scores'].get(r_metric, 0))
-                    
-            report['model_comparison'][model_name]['text_similarity']['bleu_score'].append(ts_metrics.get('bleu_score', 0))
-            # 상세 메트릭 집계를 위한 수집
-            detailed_metrics_agg['text_similarity']['normalized_levenshtein'].append(ts_metrics.get('normalized_levenshtein', 0))
-            detailed_metrics_agg['text_similarity']['bleu_score'].append(ts_metrics.get('bleu_score', 0))
-
-        # 전처리 단계별 성능 분석을 위한 데이터 수집
-        if preprocess_key not in report['preprocessing_impact']:
-            report['preprocessing_impact'][preprocess_key] = {
-                'item_accuracy': [],
-                'char_accuracy': [],
-                'inference_time': []
-            }
-        report['preprocessing_impact'][preprocess_key]['item_accuracy'].append(metrics.get('item_accuracy', 0))
-        report['preprocessing_impact'][preprocess_key]['char_accuracy'].append(metrics.get('char_accuracy', 0))
-        report['preprocessing_impact'][preprocess_key]['inference_time'].append(metrics.get('inference_time', 0))
-
-        # 전체 메트릭 집계를 위한 수집
-        overall_metrics_list['item_accuracy'].append(metrics.get('item_accuracy', 0))
-        overall_metrics_list['char_accuracy'].append(metrics.get('char_accuracy', 0))
-        overall_metrics_list['inference_time'].append(metrics.get('inference_time', 0))
-
-    # 평균 계산
-    for model_name, metrics_list in report['model_comparison'].items():
-        for metric in ['item_accuracy', 'char_accuracy', 'inference_time']:
-            if metrics_list[metric]:
-                metrics_list[metric] = sum(metrics_list[metric]) / len(metrics_list[metric])
+                      row[f'average_rouge_{r_metric}'] = ts_metrics['rouge_scores'].get(r_metric, 0)
         
-        # 추가 메트릭 평균 계산
-        for metric_type in ['type', 'region', 'length', 'size']:
-            metric_key = f'{metric_type}_accuracies'
-            for k, v_list in metrics_list[metric_key].items():
-                if v_list:
-                    metrics_list[metric_key][k] = sum(v_list) / len(v_list)
-        
-        # Text Similarity 메트릭 평균 계산
-        if metrics_list['text_similarity']:
-            ts_metrics_list = metrics_list['text_similarity']
-            if ts_metrics_list['normalized_levenshtein']:
-                 ts_metrics_list['normalized_levenshtein'] = sum(ts_metrics_list['normalized_levenshtein']) / len(ts_metrics_list['normalized_levenshtein'])
-            if ts_metrics_list['bleu_score']:
-                 ts_metrics_list['bleu_score'] = sum(ts_metrics_list['bleu_score']) / len(ts_metrics_list['bleu_score'])
-            if ts_metrics_list['rouge_scores']:
-                 for r_metric in ['rouge-1', 'rouge-2', 'rouge-l']:
-                     if ts_metrics_list['rouge_scores'][r_metric]:
-                          ts_metrics_list['rouge_scores'][r_metric] = sum(ts_metrics_list['rouge_scores'][r_metric]) / len(ts_metrics_list['rouge_scores'][r_metric])
-
-    for preprocess_key, metrics_list in report['preprocessing_impact'].items():
-        for metric in ['item_accuracy', 'char_accuracy', 'inference_time']:
-            if metrics_list[metric]:
-                metrics_list[metric] = sum(metrics_list[metric]) / len(metrics_list[metric])
+        report_list.append(row)
     
-    # 전체 평균 계산
-    if overall_metrics_list['item_accuracy']:
-        report['overall_metrics']['average_item_accuracy'] = sum(overall_metrics_list['item_accuracy']) / len(overall_metrics_list['item_accuracy'])
-    if overall_metrics_list['char_accuracy']:
-         report['overall_metrics']['average_char_accuracy'] = sum(overall_metrics_list['char_accuracy']) / len(overall_metrics_list['char_accuracy'])
-    if overall_metrics_list['inference_time']:
-         report['overall_metrics']['average_inference_time'] = sum(overall_metrics_list['inference_time']) / len(overall_metrics_list['inference_time'])
+    # DataFrame 생성
+    df = pd.DataFrame(report_list)
+    
+    # CSV 파일로 저장
+    report_filepath = os.path.join('results', 'performance_report.csv')
+    df.to_csv(report_filepath, index=False, encoding='utf-8')
+    
+    print(f"Performance report saved to {report_filepath}")
 
-    # 상세 메트릭 평균 계산
-    for metric_type in ['type', 'region', 'length', 'size']:
-         metric_key = f'{metric_type}_accuracies'
-         for k, v_list in detailed_metrics_agg[metric_key].items():
-              if v_list:
-                   report['detailed_metrics'][f'average_{metric_type}_{k}'] = sum(v_list) / len(v_list)
-
-    # Text Similarity 상세 메트릭 평균 계산
-    if detailed_metrics_agg['text_similarity']:
-        ts_agg = detailed_metrics_agg['text_similarity']
-        if ts_agg['normalized_levenshtein']:
-             report['detailed_metrics']['average_normalized_levenshtein'] = sum(ts_agg['normalized_levenshtein']) / len(ts_agg['normalized_levenshtein'])
-        if ts_agg['bleu_score']:
-             report['detailed_metrics']['average_bleu_score'] = sum(ts_agg['bleu_score']) / len(ts_agg['bleu_score'])
-        if ts_agg['rouge_scores']:
-             for r_metric in ['rouge-1', 'rouge-2', 'rouge-l']:
-                  if ts_agg['rouge_scores'][r_metric]:
-                       report['detailed_metrics'][f'average_rouge_{r_metric}'] = sum(ts_agg['rouge_scores'][r_metric]) / len(ts_agg['rouge_scores'][r_metric])
-
-    return report 
+    # 기존 딕셔너리 형식 보고서도 반환 (필요시)
+    # 여기서는 간단히 DataFrame을 반환하거나 None을 반환하도록 수정
+    return df # 또는 None 
