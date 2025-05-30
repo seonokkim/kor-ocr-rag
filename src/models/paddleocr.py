@@ -12,15 +12,12 @@ class PaddleOCRModel(BaseOCRModel):
         Args:
             use_gpu (bool): GPU 사용 여부
         """
-        super().__init__(config_path) # BaseOCRModel 초기화 추가
+        super().__init__(config_path)
         
-        # use_gpu 값에 따라 0 또는 1 설정 (이 로직은 더 이상 PaddleOCR 초기화 인자로 사용되지 않음)
-        # gpu_param = 1 if use_gpu else 0
-        
+        # PaddleOCR 초기화 (기본 설정만 사용)
         self.ocr = PaddleOCR(
-            use_angle_cls=True,  # 텍스트 방향 감지 (DeprecationWarning 발생 가능성 있음)
-            lang='korean'       # 한글 모드
-            # use_gpu 인자 제거
+            lang='korean',  # 한글 모드
+            use_angle_cls=True  # 텍스트 방향 감지
         )
     
     def preprocess(self, image: np.ndarray) -> np.ndarray:
@@ -42,7 +39,6 @@ class PaddleOCRModel(BaseOCRModel):
                 for word_info in line:
                     bbox = word_info[0]  # 바운딩 박스 좌표
                     text = word_info[1][0]  # (bbox, (text, confidence)) 형식
-                    # confidence = word_info[1][1]  # 신뢰도
                     
                     # 바운딩 박스를 [x1, y1, x2, y2] 형식으로 변환
                     x_coords = [p[0] for p in bbox]

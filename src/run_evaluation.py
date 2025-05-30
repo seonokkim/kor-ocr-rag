@@ -4,10 +4,22 @@ import yaml
 from pathlib import Path
 import cv2
 import numpy as np
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Tuple
 import json
+from Levenshtein import distance as levenshtein_distance
+from rouge import Rouge
+from nltk.translate.bleu_score import sentence_bleu, SmoothingFunction
 
-from models import EasyOCRModel, PaddleOCRModel
+# PaddleOCR 모듈 import 시도
+try:
+    from models import EasyOCRModel, PaddleOCRModel
+    PADDLEOCR_AVAILABLE = True
+except ImportError as e:
+    print(f"\nWarning: PaddleOCR 모듈을 불러올 수 없습니다 - {str(e)}")
+    print("PaddleOCR 모델은 평가에서 제외됩니다.")
+    from models import EasyOCRModel
+    PADDLEOCR_AVAILABLE = False
+
 from preprocessing import (
     SharpeningPreprocessor,
     DenoisingPreprocessor,
@@ -49,7 +61,8 @@ def bbox_iou(boxA, boxB):
 def convert_bbox_to_x1y1x2y2(bbox, fmt='easyocr'):
     """Convert bounding box format to [x1, y1, x2, y2]."""
     if fmt == 'easyocr':
-        # EasyOCR format is [[x1, y1], [x2, y2], [x3, y3], [x4, y4]]
+        # EasyOCR format is [[x1, y1], [x2, y1], [x2, y2], [x1, y2]] or similar quadrilateral
+        # We need the min/max x and y
         x_coords = [p[0] for p in bbox]
         y_coords = [p[1] for p in bbox]
         return [min(x_coords), min(y_coords), max(x_coords), max(y_coords)]
@@ -142,11 +155,69 @@ def evaluate_combination(
     total_chars = 0
     matched_chars = 0
     
+    # 추가 메트릭을 위한 카운터
+    type_metrics = {}  # 텍스트 타입별 정확도
+    region_metrics = {}  # 위치 기반 정확도
+    length_metrics = {}  # 텍스트 길이별 정확도
+    size_metrics = {}  # 바운딩 박스 크기별 정확도
+    
+    # 전체 텍스트 비교를 위한 변수
+    total_levenshtein_distance = 0
+    total_gt_length = 0
+    rouge = Rouge()
+    total_rouge_scores = {'rouge-1': 0, 'rouge-2': 0, 'rouge-l': 0}
+    total_rouge_count = 0
+    
+    # BLEU 스코어를 위한 변수
+    total_bleu_score = 0
+    total_bleu_count = 0
+    smoothing = SmoothingFunction().method1
+    
     for pred_list, gt_annotations in zip(all_predictions, ground_truth):
         # Ground Truth 어노테이션에서 텍스트와 바운딩 박스 추출
         gt_texts = [anno.get('annotation.text', '') for anno in gt_annotations]
         gt_boxes = [convert_bbox_to_x1y1x2y2(anno.get('annotation.bbox', []), fmt='json') 
                    for anno in gt_annotations]
+        gt_types = [anno.get('annotation.ttype', 'unknown') for anno in gt_annotations]
+        
+        # 전체 텍스트 비교를 위한 문자열 생성
+        gt_full_text = ' '.join(gt_texts)
+        pred_full_text = ' '.join([text for text, _ in pred_list])
+        
+        # Levenshtein 거리 계산
+        total_levenshtein_distance += levenshtein_distance(gt_full_text, pred_full_text)
+        total_gt_length += len(gt_full_text)
+        
+        # ROUGE 점수 계산
+        try:
+            if gt_full_text and pred_full_text:
+                rouge_scores = rouge.get_scores(pred_full_text, gt_full_text)[0]
+                for metric in ['rouge-1', 'rouge-2', 'rouge-l']:
+                    total_rouge_scores[metric] += rouge_scores[metric]['f']
+                total_rouge_count += 1
+        except Exception as e:
+            print(f"Warning: ROUGE 점수 계산 중 오류 발생 - {str(e)}")
+        
+        # BLEU 스코어 계산
+        try:
+            if gt_full_text and pred_full_text:
+                # 문장을 단어 단위로 분리
+                reference = [gt_full_text.split()]
+                candidate = pred_full_text.split()
+                
+                # BLEU 스코어 계산 (1-gram, 2-gram, 3-gram, 4-gram)
+                weights = [(1, 0, 0, 0), (0.5, 0.5, 0, 0), (0.33, 0.33, 0.33, 0), (0.25, 0.25, 0.25, 0.25)]
+                bleu_scores = []
+                
+                for weight in weights:
+                    score = sentence_bleu(reference, candidate, weights=weight, smoothing_function=smoothing)
+                    bleu_scores.append(score)
+                
+                # 평균 BLEU 스코어 계산
+                total_bleu_score += sum(bleu_scores) / len(bleu_scores)
+                total_bleu_count += 1
+        except Exception as e:
+            print(f"Warning: BLEU 스코어 계산 중 오류 발생 - {str(e)}")
         
         total_items += len(gt_texts)
         
@@ -175,16 +246,76 @@ def evaluate_combination(
                 gt_text = gt_texts[best_gt_idx]
                 total_chars += len(gt_text)
                 matched_chars += sum(1 for c1, c2 in zip(pred_text, gt_text) if c1 == c2)
+                
+                # 텍스트 타입별 정확도
+                gt_type = gt_types[best_gt_idx]
+                if gt_type not in type_metrics:
+                    type_metrics[gt_type] = {'total': 0, 'matched': 0}
+                type_metrics[gt_type]['total'] += 1
+                if pred_text == gt_text:
+                    type_metrics[gt_type]['matched'] += 1
+                
+                # 위치 기반 정확도 (문서 상단/중단/하단)
+                y_center = (gt_box[1] + gt_box[3]) / 2
+                region = 'top' if y_center < 0.33 else 'middle' if y_center < 0.66 else 'bottom'
+                if region not in region_metrics:
+                    region_metrics[region] = {'total': 0, 'matched': 0}
+                region_metrics[region]['total'] += 1
+                if pred_text == gt_text:
+                    region_metrics[region]['matched'] += 1
+                
+                # 텍스트 길이별 정확도
+                length = len(gt_text)
+                length_key = 'short' if length <= 2 else 'medium' if length <= 5 else 'long'
+                if length_key not in length_metrics:
+                    length_metrics[length_key] = {'total': 0, 'matched': 0}
+                length_metrics[length_key]['total'] += 1
+                if pred_text == gt_text:
+                    length_metrics[length_key]['matched'] += 1
+                
+                # 바운딩 박스 크기별 정확도
+                box_area = (gt_box[2] - gt_box[0]) * (gt_box[3] - gt_box[1])
+                size_key = 'small' if box_area < 1000 else 'medium' if box_area < 5000 else 'large'
+                if size_key not in size_metrics:
+                    size_metrics[size_key] = {'total': 0, 'matched': 0}
+                size_metrics[size_key]['total'] += 1
+                if pred_text == gt_text:
+                    size_metrics[size_key]['matched'] += 1
     
     # 최종 정확도 계산
-    item_accuracy = matched_items / total_items if total_items > 0 else 0
-    char_accuracy = matched_chars / total_chars if total_chars > 0 else 0
+    item_accuracy = float(matched_items) / total_items if total_items > 0 else 0.0
+    char_accuracy = float(matched_chars) / total_chars if total_chars > 0 else 0.0
+    
+    # 추가 메트릭 계산
+    type_accuracies = {k: float(v['matched']) / v['total'] if v['total'] > 0 else 0.0 
+                      for k, v in type_metrics.items()}
+    region_accuracies = {k: float(v['matched']) / v['total'] if v['total'] > 0 else 0.0 
+                        for k, v in region_metrics.items()}
+    length_accuracies = {k: float(v['matched']) / v['total'] if v['total'] > 0 else 0.0 
+                        for k, v in length_metrics.items()}
+    size_accuracies = {k: float(v['matched']) / v['total'] if v['total'] > 0 else 0.0 
+                      for k, v in size_metrics.items()}
+    
+    # 전체 텍스트 비교 메트릭 계산
+    normalized_levenshtein = 1.0 - (float(total_levenshtein_distance) / total_gt_length) if total_gt_length > 0 else 0.0
+    rouge_scores = {k: float(v) / total_rouge_count if total_rouge_count > 0 else 0.0 
+                   for k, v in total_rouge_scores.items()}
+    bleu_score = float(total_bleu_score) / total_bleu_count if total_bleu_count > 0 else 0.0
 
     return {
         'metrics': {
             'item_accuracy': item_accuracy,
             'char_accuracy': char_accuracy,
-            'inference_time': inference_time
+            'inference_time': inference_time,
+            'type_accuracies': type_accuracies,
+            'region_accuracies': region_accuracies,
+            'length_accuracies': length_accuracies,
+            'size_accuracies': size_accuracies,
+            'text_similarity': {
+                'normalized_levenshtein': normalized_levenshtein,
+                'rouge_scores': rouge_scores,
+                'bleu_score': bleu_score
+            }
         },
         'predictions': all_predictions
     }
@@ -206,12 +337,17 @@ def main():
 
     # 1. 기본 모델 추가
     base_model_name = config['models']['selected']
-    if base_model_name == 'easyocr':
-        # EasyOCR 모델 초기화 (use_gpu 인자는 그대로 사용)
-        evaluation_targets['base_easyocr'] = EasyOCRModel(use_gpu=config['hardware']['use_gpu'])
-        
-        # PaddleOCR 모델 초기화 (use_gpu 인자 제거)
-        evaluation_targets['base_paddleocr'] = PaddleOCRModel()
+    # EasyOCR 모델 초기화 (use_gpu 인자는 그대로 사용)
+    evaluation_targets['base_easyocr'] = EasyOCRModel(use_gpu=config['hardware']['use_gpu'])
+    
+    # PaddleOCR 모델 초기화 (모듈 사용 가능한 경우에만)
+    if PADDLEOCR_AVAILABLE:
+        try:
+            evaluation_targets['base_paddleocr'] = PaddleOCRModel(use_gpu=config['hardware']['use_gpu'])
+        except Exception as e:
+            print(f"\nWarning: PaddleOCR 모델 초기화 실패 - {str(e)}")
+            print("PaddleOCR 모델 평가를 스킵하고 계속 진행합니다.")
+    
     # 다른 기본 모델 추가 (필요시)
 
     # 2. 학습된 모델 추가 (존재하는 경우)
