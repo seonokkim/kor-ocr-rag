@@ -33,17 +33,20 @@ def load_test_data(config: Dict[str, Any]) -> tuple:
         for file in files:
             if file.endswith('.jpg'):
                 img_path = Path(root) / file
-                # 예: 이미지 파일과 같은 이름의 .json 파일 로드 (상대 경로 유지)
-                # 테스트 데이터의 레이블 경로도 train 데이터와 동일한 구조라고 가정
-                label_path = (Path(label_dir) / Path(root).relative_to(data_dir) / file).with_suffix('.json').parent.parent / Path('labels') / Path(root).relative_to(Path(data_dir) / 'images') / file.replace('.jpg', '.json')
                 
-                # 레이블 파일 경로 디버깅 출력
-                # print(f"Checking test label path: {label_path}")
+                # 이미지 파일의 data_dir 기준 images/ 하위 경로
+                relative_img_sub_path = img_path.relative_to(Path(data_dir) / 'images')
+                
+                # 레이블 파일 경로 (label_dir 기준)
+                json_path = Path(label_dir) / 'labels' / relative_img_sub_path.parent / relative_img_sub_path.name.replace('.jpg', '.json')
 
-                if label_path.exists():
+                # 레이블 파일 경로 디버깅 출력
+                # print(f"Checking test label path: {json_path}")
+
+                if json_path.exists():
                     img = cv2.imread(str(img_path))
                     if img is not None:
-                        with open(label_path, 'r', encoding='utf-8') as f:
+                        with open(json_path, 'r', encoding='utf-8') as f:
                             label_data = json.load(f)
                         
                         # JSON 데이터에서 'annotation.text' 값들을 추출하여 리스트로 반환
