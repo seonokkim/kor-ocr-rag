@@ -10,13 +10,13 @@ from Levenshtein import distance as levenshtein_distance
 from rouge import Rouge
 from nltk.translate.bleu_score import sentence_bleu, SmoothingFunction
 
-# PaddleOCR 모듈 import 시도
+# Attempt to import PaddleOCR module
 try:
     from models import EasyOCRModel, PaddleOCRModel
     PADDLEOCR_AVAILABLE = True
 except ImportError as e:
-    print(f"\nWarning: PaddleOCR 모듈을 불러올 수 없습니다 - {str(e)}")
-    print("PaddleOCR 모델은 평가에서 제외됩니다.")
+    print(f"\nWarning: Could not import PaddleOCR module - {str(e)}")
+    print("PaddleOCR model will be excluded from evaluation.")
     from models import EasyOCRModel
     PADDLEOCR_AVAILABLE = False
 
@@ -74,26 +74,26 @@ def convert_bbox_to_x1y1x2y2(bbox, fmt='easyocr'):
         raise ValueError(f"Unknown bounding box format: {fmt}")
 
 def load_test_data(config: Dict[str, Any]) -> tuple:
-    """테스트 데이터를 로드합니다 (하위 폴더 포함, 전체 어노테이션 로드)."""
+    """Loads test data (including subfolders, loads all annotations)."""
     images = []
-    ground_truth_annotations = [] # 텍스트 리스트 대신 전체 어노테이션 리스트를 저장
+    ground_truth_annotations = [] # Store list of all annotations instead of list of texts
     
     data_dir = config['data']['test_dir']
     label_dir = config['data']['label_dir']
 
-    # 이미지와 레이블 파일 매칭 (하위 폴더 탐색)
-    for root, _, files in os.walk(Path(data_dir) / 'images'): # images 폴더 하위부터 탐색
+    # Match images and label files (explore subfolders)
+    for root, _, files in os.walk(Path(data_dir) / 'images'): # Explore from images/ subfolder
         for file in files:
             if file.endswith('.jpg'):
                 img_path = Path(root) / file
                 
-                # 이미지 파일의 images/ 기준 상대 경로
+                # Relative path of the image file based on images/
                 relative_img_sub_path = img_path.relative_to(Path(data_dir) / 'images')
                 
-                # 레이블 파일 경로 (label_dir 기준)
+                # Label file path (based on label_dir)
                 json_path = Path(label_dir) / 'labels' / relative_img_sub_path.parent / relative_img_sub_path.name.replace('.jpg', '.json')
 
-                # 레이블 파일 경로 디버깅 출력
+                # Debug print for label file path
                 # print(f"Checking test label path: {json_path}")
 
                 if json_path.exists():
@@ -102,7 +102,7 @@ def load_test_data(config: Dict[str, Any]) -> tuple:
                         with open(json_path, 'r', encoding='utf-8') as f:
                             label_data = json.load(f)
                         
-                        # 전체 어노테이션 목록 저장
+                        # Store list of all annotations
                         ground_truth_annotations.append(label_data.get('annotations', []))
                         images.append(img)
                     else:
@@ -113,7 +113,7 @@ def load_test_data(config: Dict[str, Any]) -> tuple:
     return images, ground_truth_annotations
 
 def get_preprocessing_pipeline(steps: List[str]) -> List[Any]:
-    """전처리 파이프라인을 생성합니다."""
+    """Creates a preprocessing pipeline."""
     pipeline = []
     for step in steps:
         if step == 'sharpening':
@@ -130,65 +130,65 @@ def evaluate_combination(
     ground_truth: List[List[Dict[str, Any]]],
     preprocessing_steps: List[str]
 ) -> Dict[str, Any]:
-    """특정 모델과 전처리 조합을 평가합니다."""
+    """Evaluates a specific model and preprocessing combination."""
     start_time = time.time()
     all_predictions = []
     
-    # 전처리 파이프라인 생성
+    # Create preprocessing pipeline
     pipeline = get_preprocessing_pipeline(preprocessing_steps)
     
     for img in images:
-        # 전처리 적용
+        # Apply preprocessing
         processed_img = img
         for preprocessor in pipeline:
             processed_img = preprocessor(processed_img)
         
-        # 예측 수행
+        # Perform prediction
         pred = model(processed_img)
         all_predictions.append(pred)
     
     inference_time = time.time() - start_time
     
-    # 정확도 계산 (바운딩 박스 기반 매칭)
+    # Calculate accuracy (bounding box based matching)
     total_items = 0
     matched_items = 0
     total_chars = 0
     matched_chars = 0
     
-    # 추가 메트릭을 위한 카운터
-    type_metrics = {}  # 텍스트 타입별 정확도
-    region_metrics = {}  # 위치 기반 정확도
-    length_metrics = {}  # 텍스트 길이별 정확도
-    size_metrics = {}  # 바운딩 박스 크기별 정확도
+    # Counters for additional metrics
+    type_metrics = {}  # Accuracy by text type
+    region_metrics = {}  # Accuracy by location (top/middle/bottom)
+    length_metrics = {}  # Accuracy by text length (short/medium/long)
+    size_metrics = {}  # Accuracy by bounding box size (small/medium/large)
     
-    # 전체 텍스트 비교를 위한 변수
+    # Variables for full text comparison
     total_levenshtein_distance = 0
     total_gt_length = 0
     rouge = Rouge()
     total_rouge_scores = {'rouge-1': 0, 'rouge-2': 0, 'rouge-l': 0}
     total_rouge_count = 0
     
-    # BLEU 스코어를 위한 변수
+    # Variables for BLEU score
     total_bleu_score = 0
     total_bleu_count = 0
     smoothing = SmoothingFunction().method1
     
     for pred_list, gt_annotations in zip(all_predictions, ground_truth):
-        # Ground Truth 어노테이션에서 텍스트와 바운딩 박스 추출
+        # Extract text and bounding boxes from Ground Truth annotations
         gt_texts = [anno.get('annotation.text', '') for anno in gt_annotations]
         gt_boxes = [convert_bbox_to_x1y1x2y2(anno.get('annotation.bbox', []), fmt='json') 
                    for anno in gt_annotations]
         gt_types = [anno.get('annotation.ttype', 'unknown') for anno in gt_annotations]
         
-        # 전체 텍스트 비교를 위한 문자열 생성
+        # Generate strings for full text comparison
         gt_full_text = ' '.join(gt_texts)
         pred_full_text = ' '.join([text for text, _ in pred_list])
         
-        # Levenshtein 거리 계산
+        # Calculate Levenshtein distance
         total_levenshtein_distance += levenshtein_distance(gt_full_text, pred_full_text)
         total_gt_length += len(gt_full_text)
         
-        # ROUGE 점수 계산
+        # Calculate ROUGE score
         try:
             if gt_full_text and pred_full_text:
                 rouge_scores = rouge.get_scores(pred_full_text, gt_full_text)[0]
@@ -196,16 +196,16 @@ def evaluate_combination(
                     total_rouge_scores[metric] += rouge_scores[metric]['f']
                 total_rouge_count += 1
         except Exception as e:
-            print(f"Warning: ROUGE 점수 계산 중 오류 발생 - {str(e)}")
+            print(f"Warning: Error calculating ROUGE score - {str(e)}")
         
-        # BLEU 스코어 계산
+        # Calculate BLEU score
         try:
             if gt_full_text and pred_full_text:
-                # 문장을 단어 단위로 분리
+                # Split sentences into words
                 reference = [gt_full_text.split()]
                 candidate = pred_full_text.split()
                 
-                # BLEU 스코어 계산 (1-gram, 2-gram, 3-gram, 4-gram)
+                # Calculate BLEU score (1-gram, 2-gram, 3-gram, 4-gram)
                 weights = [(1, 0, 0, 0), (0.5, 0.5, 0, 0), (0.33, 0.33, 0.33, 0), (0.25, 0.25, 0.25, 0.25)]
                 bleu_scores = []
                 
@@ -213,41 +213,41 @@ def evaluate_combination(
                     score = sentence_bleu(reference, candidate, weights=weight, smoothing_function=smoothing)
                     bleu_scores.append(score)
                 
-                # 평균 BLEU 스코어 계산
+                # Calculate average BLEU score
                 total_bleu_score += sum(bleu_scores) / len(bleu_scores)
                 total_bleu_count += 1
         except Exception as e:
-            print(f"Warning: BLEU 스코어 계산 중 오류 발생 - {str(e)}")
+            print(f"Warning: Error calculating BLEU score - {str(e)}")
         
         total_items += len(gt_texts)
         
-        # 예측 결과와 Ground Truth 매칭
+        # Match predictions with Ground Truth
         matched_gt_indices = set()
         for pred_text, pred_box in pred_list:
             best_iou = 0
             best_gt_idx = -1
             
-            # 가장 높은 IoU를 가진 Ground Truth 찾기
+            # Find the Ground Truth with the highest IoU
             for i, (gt_text, gt_box) in enumerate(zip(gt_texts, gt_boxes)):
                 if i in matched_gt_indices:
                     continue
                     
                 iou = bbox_iou(pred_box, gt_box)
-                if iou > best_iou and iou > 0.5:  # IoU 임계값
+                if iou > best_iou and iou > 0.5:  # IoU threshold
                     best_iou = iou
                     best_gt_idx = i
             
-            # 매칭된 경우
+            # If matched
             if best_gt_idx != -1:
                 matched_gt_indices.add(best_gt_idx)
                 matched_items += 1
                 
-                # 문자 수준 정확도 계산
+                # Calculate character-level accuracy
                 gt_text = gt_texts[best_gt_idx]
                 total_chars += len(gt_text)
                 matched_chars += sum(1 for c1, c2 in zip(pred_text, gt_text) if c1 == c2)
                 
-                # 텍스트 타입별 정확도
+                # Accuracy by text type
                 gt_type = gt_types[best_gt_idx]
                 if gt_type not in type_metrics:
                     type_metrics[gt_type] = {'total': 0, 'matched': 0}
@@ -255,7 +255,7 @@ def evaluate_combination(
                 if pred_text == gt_text:
                     type_metrics[gt_type]['matched'] += 1
                 
-                # 위치 기반 정확도 (문서 상단/중단/하단)
+                # Accuracy by location (top/middle/bottom)
                 y_center = (gt_box[1] + gt_box[3]) / 2
                 region = 'top' if y_center < 0.33 else 'middle' if y_center < 0.66 else 'bottom'
                 if region not in region_metrics:
@@ -264,7 +264,7 @@ def evaluate_combination(
                 if pred_text == gt_text:
                     region_metrics[region]['matched'] += 1
                 
-                # 텍스트 길이별 정확도
+                # Accuracy by text length
                 length = len(gt_text)
                 length_key = 'short' if length <= 2 else 'medium' if length <= 5 else 'long'
                 if length_key not in length_metrics:
@@ -273,7 +273,7 @@ def evaluate_combination(
                 if pred_text == gt_text:
                     length_metrics[length_key]['matched'] += 1
                 
-                # 바운딩 박스 크기별 정확도
+                # Accuracy by bounding box size
                 box_area = (gt_box[2] - gt_box[0]) * (gt_box[3] - gt_box[1])
                 size_key = 'small' if box_area < 1000 else 'medium' if box_area < 5000 else 'large'
                 if size_key not in size_metrics:
@@ -282,11 +282,11 @@ def evaluate_combination(
                 if pred_text == gt_text:
                     size_metrics[size_key]['matched'] += 1
     
-    # 최종 정확도 계산
+    # Calculate final accuracies
     item_accuracy = float(matched_items) / total_items if total_items > 0 else 0.0
     char_accuracy = float(matched_chars) / total_chars if total_chars > 0 else 0.0
     
-    # 추가 메트릭 계산
+    # Calculate additional metrics
     type_accuracies = {k: float(v['matched']) / v['total'] if v['total'] > 0 else 0.0 
                       for k, v in type_metrics.items()}
     region_accuracies = {k: float(v['matched']) / v['total'] if v['total'] > 0 else 0.0 
@@ -296,7 +296,7 @@ def evaluate_combination(
     size_accuracies = {k: float(v['matched']) / v['total'] if v['total'] > 0 else 0.0 
                       for k, v in size_metrics.items()}
     
-    # 전체 텍스트 비교 메트릭 계산
+    # Calculate full text comparison metrics
     normalized_levenshtein = 1.0 - (float(total_levenshtein_distance) / total_gt_length) if total_gt_length > 0 else 0.0
     rouge_scores = {k: float(v) / total_rouge_count if total_rouge_count > 0 else 0.0 
                    for k, v in total_rouge_scores.items()}
@@ -321,47 +321,47 @@ def evaluate_combination(
     }
 
 def main():
-    # 설정 로드
+    # Load configuration
     with open("configs/default_config.yaml", 'r') as f:
         config = yaml.safe_load(f)
     
-    # 테스트 데이터 로드
+    # Load test data
     test_images, ground_truth = load_test_data(config)
-    print(f"로드된 테스트 이미지 수: {len(test_images)}")
+    print(f"Loaded {len(test_images)} test images.")
     
-    # 학습된 모델 디렉토리
+    # Trained models directory
     trained_model_dir = "trained_models"
 
-    # 모델 초기화 및 평가 대상 설정
+    # Initialize models and set up evaluation targets
     evaluation_targets = {}
 
-    # 1. 기본 모델 추가
+    # 1. Add base models
     base_model_name = config['models']['selected']
-    # EasyOCR 모델 초기화 (use_gpu 인자는 그대로 사용)
+    # Initialize EasyOCR model (use_gpu argument is used)
     evaluation_targets['base_easyocr'] = EasyOCRModel(use_gpu=config['hardware']['use_gpu'])
     
-    # PaddleOCR 모델 초기화 (모듈 사용 가능한 경우에만)
+    # Initialize PaddleOCR model (skip if module is not available or initialization fails)
     if PADDLEOCR_AVAILABLE:
         try:
             evaluation_targets['base_paddleocr'] = PaddleOCRModel(use_gpu=config['hardware']['use_gpu'])
         except Exception as e:
-            print(f"\nWarning: PaddleOCR 모델 초기화 실패 - {str(e)}")
-            print("PaddleOCR 모델 평가를 스킵하고 계속 진행합니다.")
+            print(f"\nWarning: PaddleOCR model initialization failed - {str(e)}")
+            print("PaddleOCR model evaluation will be skipped.")
     
-    # 다른 기본 모델 추가 (필요시)
+    # Add other base models (if needed)
 
-    # 2. 학습된 모델 추가 (존재하는 경우)
-    # 설정 파일에 정의된 학습 가능한 모델들을 확인하고 학습된 모델 로드 시도
-    learnable_models = ['tesseract', 'paddleocr'] # 사용자 학습 지원 모델 목록
+    # 2. Add trained models (if they exist)
+    # Check for learnable models defined in config and attempt to load trained models
+    learnable_models = ['tesseract', 'paddleocr'] # List of models supporting user training
     for model_name in learnable_models:
         trained_model_path = os.path.join(trained_model_dir, f'{model_name}_korean')
-        # 학습된 모델 파일 (예: pytorch 모델 파일 등) 존재 여부 확인
-        # 실제 모델 파일 확장자 및 구조에 맞게 수정 필요
-        if os.path.exists(trained_model_path): # 학습된 모델 디렉토리 또는 파일 존재 확인
+        # Check if trained model file (e.g., pytorch model file) exists
+        # Needs to be adjusted according to the actual model file extension and structure
+        if os.path.exists(trained_model_path): # Check if trained model directory or file exists
              try:
-                 # TODO: 학습된 모델 로드 로직 구현
-                 # 예: if model_name == 'tesseract': loaded_model = TesseractModel(model_path=trained_model_path)
-                 # 예: elif model_name == 'paddleocr': loaded_model = PaddleOCRModel(model_path=trained_model_path)
+                 # TODO: Implement trained model loading logic
+                 # Example: if model_name == 'tesseract': loaded_model = TesseractModel(model_path=trained_model_path)
+                 # Example: elif model_name == 'paddleocr': loaded_model = PaddleOCRModel(model_path=trained_model_path)
                  print(f"\nWarning: Loading trained {model_name} model is not yet implemented.")
                  # evaluation_targets[f'trained_{model_name}'] = loaded_model
              except Exception as e:
@@ -370,12 +370,12 @@ def main():
             print(f"Info: Trained {model_name} model not found at {trained_model_path}. Skipping evaluation for this model.")
 
     if not evaluation_targets:
-        print("평가할 모델이 없습니다. 스크립트를 종료합니다.")
+        print("No models available for evaluation. Exiting script.")
         return
     
-    # 전처리 조합 생성
+    # Generate preprocessing combinations
     preprocessing_combinations = [
-        [],  # 전처리 없음
+        [],  # No preprocessing
         ['sharpening'],
         ['denoising'],
         ['binarization'],
@@ -385,20 +385,20 @@ def main():
         ['sharpening', 'denoising', 'binarization']
     ]
     
-    # 모든 모델 및 전처리 조합에 대해 평가 수행
+    # Perform evaluation for all model and preprocessing combinations
     for target_name, model in evaluation_targets.items():
-        print(f"\n모델 평가 중: {target_name}")
+        print(f"\nEvaluating model: {target_name}")
         for preprocess_steps in preprocessing_combinations:
-            print(f"전처리 단계: {preprocess_steps if preprocess_steps else '없음'}")
+            print(f"Preprocessing steps: {preprocess_steps if preprocess_steps else 'None'}")
             
-            # 평가 설정 생성
+            # Create evaluation config
             eval_config = create_evaluation_config(
-                model_name=target_name, # 모델 이름에 기본/학습 정보 포함
+                model_name=target_name, # Include base/trained info in model name
                 preprocessing_steps=preprocess_steps,
                 use_gpu=config['hardware']['use_gpu']
             )
             
-            # 평가 수행
+            # Perform evaluation
             results = evaluate_combination(
                 model=model,
                 images=test_images,
@@ -406,19 +406,19 @@ def main():
                 preprocessing_steps=preprocess_steps
             )
             
-            # 결과 저장
+            # Save results
             save_evaluation_results(results, eval_config)
             
-            # 중간 결과 출력
-            print(f"항목별 정확도: {results['metrics']['item_accuracy']:.4f}")
-            print(f"문자 정확도: {results['metrics']['char_accuracy']:.4f}")
-            print(f"추론 시간: {results['metrics']['inference_time']:.2f}초")
+            # Print intermediate results
+            print(f"Item Accuracy: {results['metrics']['item_accuracy']:.4f}")
+            print(f"Character Accuracy: {results['metrics']['char_accuracy']:.4f}")
+            print(f"Inference Time: {results['metrics']['inference_time']:.2f} seconds")
     
-    # 전체 결과 분석 및 보고서 생성
-    print("\n전체 결과 분석 중...")
+    # Analyze overall results and generate report
+    print("\nAnalyzing overall results...")
     all_results = load_all_results()
     report = generate_performance_report(all_results)
-    print("평가 완료! 결과는 results 디렉토리에서 확인할 수 있습니다.")
+    print("Evaluation complete! Results can be found in the results directory.")
 
 if __name__ == "__main__":
     main() 
