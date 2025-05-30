@@ -34,6 +34,6 @@ evaluation:
 # Data Configuration
 data:
   train_dir: "data/train"
-  test_dir: "data/images/5350224/1994"
-  label_dir: "data/labels/5350224/1994"
+  test_dir: "data/test"
+  label_dir: "data/test"
   val_dir: "data/val" 

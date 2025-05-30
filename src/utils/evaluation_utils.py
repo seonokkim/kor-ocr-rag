@@ -27,17 +27,19 @@ def create_evaluation_config(
 def save_evaluation_results(
     results: Dict[str, Any],
     config: Dict[str, Any],
-    results_dir: str = "results"
+    base_results_dir: str = "results"
 ) -> str:
-    """평가 결과를 저장합니다."""
-    os.makedirs(results_dir, exist_ok=True)
+    """평가 결과를 타임스탬프 폴더에 저장합니다."""
+    # 결과 저장 디렉토리 생성 (타임스탬프 기반)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    evaluation_run_dir = os.path.join(base_results_dir, timestamp)
+    os.makedirs(evaluation_run_dir, exist_ok=True)
     
     # 결과 파일명 생성
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     model_name = config['model']
     preprocess_steps = '_'.join(config['preprocessing']) if config['preprocessing'] else 'no_preprocessing'
-    filename = f"eval_{model_name}_{preprocess_steps}_{timestamp}.json"
-    filepath = os.path.join(results_dir, filename)
+    filename = f"eval_{model_name}_{preprocess_steps}.json" # 타임스탬프는 폴더명에 포함
+    filepath = os.path.join(evaluation_run_dir, filename)
     
     # 결과 저장
     with open(filepath, 'w', encoding='utf-8') as f:
@@ -46,31 +48,36 @@ def save_evaluation_results(
             'results': results
         }, f, ensure_ascii=False, indent=2)
     
+    print(f"Evaluation results saved to {filepath}")
     return filepath
 
-def load_all_results(results_dir: str = "results") -> pd.DataFrame:
+def load_all_results(base_results_dir: str = "results") -> pd.DataFrame:
     """모든 평가 결과를 로드하여 DataFrame으로 반환합니다."""
     results = []
     
-    for file in Path(results_dir).glob("eval_*.json"):
-        with open(file, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-            config = data['config']
-            metrics = data['results']['metrics']
-            
-            results.append({
-                'timestamp': config['timestamp'],
-                'model': config['model'],
-                'preprocessing': ','.join(config['preprocessing']) if config['preprocessing'] else 'none',
-                'use_gpu': config['hardware']['use_gpu'],
-                'accuracy': metrics['accuracy'],
-                'char_accuracy': metrics['char_accuracy'],
-                'inference_time': metrics['inference_time']
-            })
+    # 하위 디렉토리를 포함하여 모든 eval_*.json 파일 검색
+    for root, dirs, files in os.walk(base_results_dir):
+        for file in files:
+            if file.startswith('eval_') and file.endswith('.json'):
+                filepath = os.path.join(root, file)
+                with open(filepath, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    config = data['config']
+                    metrics = data['results']['metrics']
+                    
+                    results.append({
+                        'timestamp': config['timestamp'],
+                        'model': config['model'],
+                        'preprocessing': ','.join(config['preprocessing']) if config['preprocessing'] else 'none',
+                        'use_gpu': config['hardware']['use_gpu'],
+                        'item_accuracy': metrics['item_accuracy'], # 'accuracy' 대신 'item_accuracy' 사용
+                        'char_accuracy': metrics['char_accuracy'],
+                        'inference_time': metrics['inference_time']
+                    })
     
     return pd.DataFrame(results)
 
-def plot_performance_comparison(df: pd.DataFrame, metric: str = 'accuracy'):
+def plot_performance_comparison(df: pd.DataFrame, metric: str = 'item_accuracy'):
     """성능 비교 그래프를 생성합니다."""
     plt.figure(figsize=(12, 6))
     
@@ -96,7 +103,7 @@ def generate_performance_report(df: pd.DataFrame, output_dir: str = "results"):
     
     # 기본 통계
     stats = df.groupby(['model', 'preprocessing']).agg({
-        'accuracy': ['mean', 'std'],
+        'item_accuracy': ['mean', 'std'],
         'char_accuracy': ['mean', 'std'],
         'inference_time': ['mean', 'std']
     })
@@ -119,7 +126,7 @@ def generate_performance_report(df: pd.DataFrame, output_dir: str = "results"):
         'timestamp': timestamp,
         'summary_statistics': stats.to_dict(),
         'best_performing_combinations': {
-            'accuracy': df.loc[df['accuracy'].idxmax()].to_dict(),
+            'item_accuracy': df.loc[df['item_accuracy'].idxmax()].to_dict(),
             'char_accuracy': df.loc[df['char_accuracy'].idxmax()].to_dict(),
             'fastest_inference': df.loc[df['inference_time'].idxmin()].to_dict()
         }
