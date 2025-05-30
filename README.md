@@ -33,7 +33,7 @@ This repository provides a comprehensive framework for evaluating the performanc
 
 1. Clone the repository:
    ```bash
-   git clone <repository_url>
+   git clone https://github.com/seonokkim/kor-ocr-rag
    cd kor-ocr-rag
    ```
 
