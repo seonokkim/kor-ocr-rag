@@ -7,7 +7,7 @@ import numpy as np
 from typing import List, Dict, Any
 import json
 
-from models import EasyOCRModel
+from models import EasyOCRModel, PaddleOCRModel
 from preprocessing import (
     SharpeningPreprocessor,
     DenoisingPreprocessor,
@@ -119,7 +119,7 @@ def evaluate_combination(
 ) -> Dict[str, Any]:
     """특정 모델과 전처리 조합을 평가합니다."""
     start_time = time.time()
-    predictions = []
+    all_predictions = []
     
     # 전처리 파이프라인 생성
     pipeline = get_preprocessing_pipeline(preprocessing_steps)
@@ -132,43 +132,53 @@ def evaluate_combination(
         
         # 예측 수행
         pred = model(processed_img)
-        predictions.extend(pred)
+        all_predictions.append(pred)
     
     inference_time = time.time() - start_time
     
-    # 정확도 계산 (항목별 일치율)
-    item_correct = 0
+    # 정확도 계산 (바운딩 박스 기반 매칭)
     total_items = 0
-    for pred_list, gt_annotations in zip(predictions, ground_truth):
-        # Ground Truth 어노테이션에서 텍스트 추출
+    matched_items = 0
+    total_chars = 0
+    matched_chars = 0
+    
+    for pred_list, gt_annotations in zip(all_predictions, ground_truth):
+        # Ground Truth 어노테이션에서 텍스트와 바운딩 박스 추출
         gt_texts = [anno.get('annotation.text', '') for anno in gt_annotations]
+        gt_boxes = [convert_bbox_to_x1y1x2y2(anno.get('annotation.bbox', []), fmt='json') 
+                   for anno in gt_annotations]
+        
         total_items += len(gt_texts)
         
-        # 간단한 비교: 예측 리스트의 각 항목이 Ground Truth 리스트에 포함되어 있는지 확인
+        # 예측 결과와 Ground Truth 매칭
         matched_gt_indices = set()
-        for pred_item in pred_list:
-            for i, gt_text in enumerate(gt_texts):
-                if i not in matched_gt_indices and pred_item == gt_text:
-                    item_correct += 1
-                    matched_gt_indices.add(i)
-                    break # 예측 항목 하나에 대해 하나의 Ground Truth 항목만 매칭
-
-    item_accuracy = item_correct / total_items if total_items > 0 else 0
+        for pred_text, pred_box in pred_list:
+            best_iou = 0
+            best_gt_idx = -1
+            
+            # 가장 높은 IoU를 가진 Ground Truth 찾기
+            for i, (gt_text, gt_box) in enumerate(zip(gt_texts, gt_boxes)):
+                if i in matched_gt_indices:
+                    continue
+                    
+                iou = bbox_iou(pred_box, gt_box)
+                if iou > best_iou and iou > 0.5:  # IoU 임계값
+                    best_iou = iou
+                    best_gt_idx = i
+            
+            # 매칭된 경우
+            if best_gt_idx != -1:
+                matched_gt_indices.add(best_gt_idx)
+                matched_items += 1
+                
+                # 문자 수준 정확도 계산
+                gt_text = gt_texts[best_gt_idx]
+                total_chars += len(gt_text)
+                matched_chars += sum(1 for c1, c2 in zip(pred_text, gt_text) if c1 == c2)
     
-    # 문자 수준 정확도 계산
-    total_chars = 0
-    correct_chars = 0
-    for pred_list, gt_annotations in zip(predictions, ground_truth):
-        # Ground Truth 어노테이션에서 텍스트 추출
-        gt_texts = [anno.get('annotation.text', '') for anno in gt_annotations]
-        
-        # 각 이미지의 텍스트 리스트를 단일 문자열로 합쳐서 문자 정확도 계산
-        pred_text = " ".join(pred_list)
-        gt_text = " ".join(gt_texts)
-        total_chars += len(gt_text)
-        correct_chars += sum(1 for c1, c2 in zip(pred_text, gt_text) if c1 == c2)
-
-    char_accuracy = correct_chars / total_chars if total_chars > 0 else 0
+    # 최종 정확도 계산
+    item_accuracy = matched_items / total_items if total_items > 0 else 0
+    char_accuracy = matched_chars / total_chars if total_chars > 0 else 0
 
     return {
         'metrics': {
@@ -176,7 +186,7 @@ def evaluate_combination(
             'char_accuracy': char_accuracy,
             'inference_time': inference_time
         },
-        'predictions': predictions
+        'predictions': all_predictions
     }
 
 def main():
@@ -197,7 +207,11 @@ def main():
     # 1. 기본 모델 추가
     base_model_name = config['models']['selected']
     if base_model_name == 'easyocr':
-        evaluation_targets['base_easyocr'] = EasyOCRModel()
+        # EasyOCR 모델 초기화 (use_gpu 인자는 그대로 사용)
+        evaluation_targets['base_easyocr'] = EasyOCRModel(use_gpu=config['hardware']['use_gpu'])
+        
+        # PaddleOCR 모델 초기화 (use_gpu 인자 제거)
+        evaluation_targets['base_paddleocr'] = PaddleOCRModel()
     # 다른 기본 모델 추가 (필요시)
 
     # 2. 학습된 모델 추가 (존재하는 경우)

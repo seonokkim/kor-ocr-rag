@@ -63,3 +63,5 @@ logs/
 *.temp
 .coverage
 htmlcov/ 
+
+=*        
