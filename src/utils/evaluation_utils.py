@@ -15,67 +15,79 @@ def create_evaluation_config(
 ) -> Dict[str, Any]:
     """평가 설정을 생성합니다."""
     return {
-        'model': model_name,
-        'preprocessing': preprocessing_steps,
-        'hardware': {
-            'use_gpu': use_gpu,
-            'device': 'cuda' if use_gpu else 'cpu'
-        },
-        'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        'model_name': model_name,
+        'preprocessing_steps': preprocessing_steps,
+        'use_gpu': use_gpu,
+        'timestamp': time.strftime('%Y%m%d_%H%M%S')
     }
 
-def save_evaluation_results(
-    results: Dict[str, Any],
-    config: Dict[str, Any],
-    base_results_dir: str = "results"
-) -> str:
-    """평가 결과를 타임스탬프 폴더에 저장합니다."""
-    # 결과 저장 디렉토리 생성 (타임스탬프 기반)
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    evaluation_run_dir = os.path.join(base_results_dir, timestamp)
-    os.makedirs(evaluation_run_dir, exist_ok=True)
+def get_next_result_number(model_name: str, preprocess_info: str) -> int:
+    """다음 결과 파일 번호를 생성합니다."""
+    results_dir = Path('results')
+    results_dir.mkdir(exist_ok=True)
     
-    # 결과 파일명 생성
-    model_name = config['model']
-    preprocess_steps = '_'.join(config['preprocessing']) if config['preprocessing'] else 'no_preprocessing'
-    filename = f"eval_{model_name}_{preprocess_steps}.json" # 타임스탬프는 폴더명에 포함
-    filepath = os.path.join(evaluation_run_dir, filename)
+    # 오늘 날짜의 파일 찾기
+    today = time.strftime('%Y%m%d')
+    pattern = f"{today}_{model_name}_{preprocess_info}_*.json"
+    existing_files = list(results_dir.glob(pattern))
     
-    # 결과 저장
-    with open(filepath, 'w', encoding='utf-8') as f:
+    if not existing_files:
+        return 1
+    
+    # 가장 큰 번호 찾기
+    numbers = [int(f.stem.split('_')[-1]) for f in existing_files]
+    return max(numbers) + 1 if numbers else 1
+
+def save_evaluation_results(results: Dict[str, Any], config: Dict[str, Any]):
+    """평가 결과를 저장합니다."""
+    # 결과 파일명 생성 (날짜_모델_전처리_순번.json 형식)
+    today = time.strftime('%Y%m%d')
+    model_name = config['model_name']
+    preprocess_steps = config['preprocessing_steps']
+    
+    # 전처리 여부와 방식 결정
+    if not preprocess_steps:
+        preprocess_info = 'no_preprocess'
+    else:
+        preprocess_info = '_'.join(preprocess_steps)
+    
+    # 다음 파일 번호 생성
+    next_num = get_next_result_number(model_name, preprocess_info)
+    
+    # 결과 파일 저장
+    results_dir = Path('results')
+    results_dir.mkdir(exist_ok=True)
+    results_file = results_dir / f"{today}_{model_name}_{preprocess_info}_{next_num}.json"
+    
+    with open(results_file, 'w', encoding='utf-8') as f:
         json.dump({
             'config': config,
-            'results': results
+            'metrics': results['metrics'],
+            'predictions': results['predictions']
         }, f, ensure_ascii=False, indent=2)
     
-    print(f"Evaluation results saved to {filepath}")
-    return filepath
+    print(f"Results saved to {results_file}")
 
-def load_all_results(base_results_dir: str = "results") -> pd.DataFrame:
-    """모든 평가 결과를 로드하여 DataFrame으로 반환합니다."""
-    results = []
+def load_all_results() -> Dict[str, Any]:
+    """모든 평가 결과를 로드합니다."""
+    all_results = {}
+    results_dir = Path('results')
     
-    # 하위 디렉토리를 포함하여 모든 eval_*.json 파일 검색
-    for root, dirs, files in os.walk(base_results_dir):
-        for file in files:
-            if file.startswith('eval_') and file.endswith('.json'):
-                filepath = os.path.join(root, file)
-                with open(filepath, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-                    config = data['config']
-                    metrics = data['results']['metrics']
-                    
-                    results.append({
-                        'timestamp': config['timestamp'],
-                        'model': config['model'],
-                        'preprocessing': ','.join(config['preprocessing']) if config['preprocessing'] else 'none',
-                        'use_gpu': config['hardware']['use_gpu'],
-                        'item_accuracy': metrics['item_accuracy'], # 'accuracy' 대신 'item_accuracy' 사용
-                        'char_accuracy': metrics['char_accuracy'],
-                        'inference_time': metrics['inference_time']
-                    })
+    if not results_dir.exists():
+        return all_results
     
-    return pd.DataFrame(results)
+    # 모든 JSON 파일에서 결과 로드
+    for result_file in results_dir.glob('*.json'):
+        if result_file.name == 'performance_report.csv':
+            continue
+            
+        with open(result_file, 'r', encoding='utf-8') as f:
+            result_data = json.load(f)
+            
+        # 파일명을 키로 사용
+        all_results[result_file.stem] = result_data
+    
+    return all_results
 
 def plot_performance_comparison(df: pd.DataFrame, metric: str = 'item_accuracy'):
     """성능 비교 그래프를 생성합니다."""
@@ -96,43 +108,30 @@ def plot_performance_comparison(df: pd.DataFrame, metric: str = 'item_accuracy')
     plt.tight_layout()
     return plt
 
-def generate_performance_report(df: pd.DataFrame, output_dir: str = "results"):
+def generate_performance_report(all_results: Dict[str, Any]) -> pd.DataFrame:
     """성능 보고서를 생성합니다."""
-    os.makedirs(output_dir, exist_ok=True)
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    if not all_results:
+        return pd.DataFrame()
     
-    # 기본 통계
-    stats = df.groupby(['model', 'preprocessing']).agg({
-        'item_accuracy': ['mean', 'std'],
-        'char_accuracy': ['mean', 'std'],
-        'inference_time': ['mean', 'std']
-    })
+    # 결과 데이터 준비
+    data = []
+    for file_name, result in all_results.items():
+        config = result['config']
+        metrics = result['metrics']
+        data.append({
+            'Model': config['model_name'],
+            'Preprocessing': '_'.join(config['preprocessing_steps']) if config['preprocessing_steps'] else 'no_preprocess',
+            'Item Accuracy': metrics.get('item_accuracy', 0),
+            'Char Accuracy': metrics.get('char_accuracy', 0),
+            'Inference Time': metrics.get('inference_time', 0)
+        })
     
-    # 컬럼 이름 정리 (멀티인덱스 튜플을 문자열로 변환)
-    stats.columns = ['_'.join(col).strip() for col in stats.columns.values]
+    # DataFrame 생성 및 정렬
+    df = pd.DataFrame(data)
+    df = df.sort_values(['Model', 'Preprocessing'])
     
-    # 인덱스를 일반 컬럼으로 변환하여 딕셔너리 키가 튜플이 되지 않도록 함
-    stats = stats.reset_index()
+    # 결과 저장
+    report_file = Path('results') / 'performance_report.csv'
+    df.to_csv(report_file, index=False)
     
-    stats = stats.round(4)
-    
-    # 그래프 생성
-    plt = plot_performance_comparison(df)
-    plt.savefig(os.path.join(output_dir, f'performance_comparison_{timestamp}.png'))
-    plt.close()
-    
-    # 보고서 저장
-    report = {
-        'timestamp': timestamp,
-        'summary_statistics': stats.to_dict(),
-        'best_performing_combinations': {
-            'item_accuracy': df.loc[df['item_accuracy'].idxmax()].to_dict(),
-            'char_accuracy': df.loc[df['char_accuracy'].idxmax()].to_dict(),
-            'fastest_inference': df.loc[df['inference_time'].idxmin()].to_dict()
-        }
-    }
-    
-    with open(os.path.join(output_dir, f'performance_report_{timestamp}.json'), 'w', encoding='utf-8') as f:
-        json.dump(report, f, ensure_ascii=False, indent=2)
-    
-    return report 
+    return df 

@@ -20,21 +20,61 @@ from utils.evaluation_utils import (
     generate_performance_report
 )
 
+def bbox_iou(boxA, boxB):
+    """Compute the Intersection over Union (IoU) of two bounding boxes.
+    Boxes are expected in [x1, y1, x2, y2] format.
+    """
+    # determine the (x, y)-coordinates of the intersection rectangle
+    xA = max(boxA[0], boxB[0])
+    yA = max(boxA[1], boxB[1])
+    xB = min(boxA[2], boxB[2])
+    yB = min(boxA[3], boxB[3])
+
+    # compute the area of intersection rectangle
+    interArea = max(0, xB - xA + 1) * max(0, yB - yA + 1)
+
+    # compute the area of both the prediction and ground-truth
+    # rectangles
+    boxAArea = (boxA[2] - boxA[0] + 1) * (boxA[3] - boxA[1] + 1)
+    boxBArea = (boxB[2] - boxB[0] + 1) * (boxB[3] - boxB[1] + 1)
+
+    # compute the intersection over union by taking the intersection
+    # area and dividing it by the sum of prediction + ground-truth
+    # areas - the intersection area
+    iou = interArea / float(boxAArea + boxBArea - interArea)
+
+    # return the intersection over union value
+    return iou
+
+def convert_bbox_to_x1y1x2y2(bbox, fmt='easyocr'):
+    """Convert bounding box format to [x1, y1, x2, y2]."""
+    if fmt == 'easyocr':
+        # EasyOCR format is [[x1, y1], [x2, y2], [x3, y3], [x4, y4]]
+        x_coords = [p[0] for p in bbox]
+        y_coords = [p[1] for p in bbox]
+        return [min(x_coords), min(y_coords), max(x_coords), max(y_coords)]
+    elif fmt == 'json':
+        # JSON format is [x, y, width, height]
+        x, y, w, h = bbox
+        return [x, y, x + w, y + h]
+    else:
+        raise ValueError(f"Unknown bounding box format: {fmt}")
+
 def load_test_data(config: Dict[str, Any]) -> tuple:
-    """테스트 데이터를 로드합니다 (하위 폴더 포함)."""
+    """테스트 데이터를 로드합니다 (하위 폴더 포함, 전체 어노테이션 로드)."""
     images = []
-    ground_truth = []
+    ground_truth_annotations = [] # 텍스트 리스트 대신 전체 어노테이션 리스트를 저장
     
     data_dir = config['data']['test_dir']
     label_dir = config['data']['label_dir']
 
     # 이미지와 레이블 파일 매칭 (하위 폴더 탐색)
-    for root, _, files in os.walk(data_dir):
+    for root, _, files in os.walk(Path(data_dir) / 'images'): # images 폴더 하위부터 탐색
         for file in files:
             if file.endswith('.jpg'):
                 img_path = Path(root) / file
                 
-                # 이미지 파일의 data_dir 기준 images/ 하위 경로
+                # 이미지 파일의 images/ 기준 상대 경로
                 relative_img_sub_path = img_path.relative_to(Path(data_dir) / 'images')
                 
                 # 레이블 파일 경로 (label_dir 기준)
@@ -49,16 +89,15 @@ def load_test_data(config: Dict[str, Any]) -> tuple:
                         with open(json_path, 'r', encoding='utf-8') as f:
                             label_data = json.load(f)
                         
-                        # JSON 데이터에서 'annotation.text' 값들을 추출하여 리스트로 반환
-                        ground_truth_list = [anno.get('annotation.text', '') for anno in label_data.get('annotations', [])]
-                        ground_truth.append(ground_truth_list)
+                        # 전체 어노테이션 목록 저장
+                        ground_truth_annotations.append(label_data.get('annotations', []))
                         images.append(img)
                     else:
                         print(f"Warning: Could not load image {img_path}")
                 else:
-                    print(f"Warning: No corresponding JSON file found for {img_path.name} in {label_dir}")
+                    print(f"Warning: No corresponding JSON file found for {img_path.name} at {json_path}")
     
-    return images, ground_truth
+    return images, ground_truth_annotations
 
 def get_preprocessing_pipeline(steps: List[str]) -> List[Any]:
     """전처리 파이프라인을 생성합니다."""
@@ -75,7 +114,7 @@ def get_preprocessing_pipeline(steps: List[str]) -> List[Any]:
 def evaluate_combination(
     model,
     images: List[np.ndarray],
-    ground_truth: List[str],
+    ground_truth: List[List[Dict[str, Any]]],
     preprocessing_steps: List[str]
 ) -> Dict[str, Any]:
     """특정 모델과 전처리 조합을 평가합니다."""
@@ -100,27 +139,32 @@ def evaluate_combination(
     # 정확도 계산 (항목별 일치율)
     item_correct = 0
     total_items = 0
-    for pred_list, gt_list in zip(predictions, ground_truth):
-        total_items += len(gt_list)
+    for pred_list, gt_annotations in zip(predictions, ground_truth):
+        # Ground Truth 어노테이션에서 텍스트 추출
+        gt_texts = [anno.get('annotation.text', '') for anno in gt_annotations]
+        total_items += len(gt_texts)
+        
         # 간단한 비교: 예측 리스트의 각 항목이 Ground Truth 리스트에 포함되어 있는지 확인
-        # 실제 평가 시에는 더 정교한 매칭 로직이 필요할 수 있습니다.
         matched_gt_indices = set()
         for pred_item in pred_list:
-            for i, gt_item in enumerate(gt_list):
-                if i not in matched_gt_indices and pred_item == gt_item:
+            for i, gt_text in enumerate(gt_texts):
+                if i not in matched_gt_indices and pred_item == gt_text:
                     item_correct += 1
                     matched_gt_indices.add(i)
                     break # 예측 항목 하나에 대해 하나의 Ground Truth 항목만 매칭
 
     item_accuracy = item_correct / total_items if total_items > 0 else 0
     
-    # 문자 수준 정확도 계산 (기존 로직 유지)
+    # 문자 수준 정확도 계산
     total_chars = 0
     correct_chars = 0
-    for pred_list, gt_list in zip(predictions, ground_truth):
+    for pred_list, gt_annotations in zip(predictions, ground_truth):
+        # Ground Truth 어노테이션에서 텍스트 추출
+        gt_texts = [anno.get('annotation.text', '') for anno in gt_annotations]
+        
         # 각 이미지의 텍스트 리스트를 단일 문자열로 합쳐서 문자 정확도 계산
         pred_text = " ".join(pred_list)
-        gt_text = " ".join(gt_list)
+        gt_text = " ".join(gt_texts)
         total_chars += len(gt_text)
         correct_chars += sum(1 for c1, c2 in zip(pred_text, gt_text) if c1 == c2)
 
@@ -128,7 +172,7 @@ def evaluate_combination(
 
     return {
         'metrics': {
-            'item_accuracy': item_accuracy, # 항목별 정확도 추가
+            'item_accuracy': item_accuracy,
             'char_accuracy': char_accuracy,
             'inference_time': inference_time
         },
