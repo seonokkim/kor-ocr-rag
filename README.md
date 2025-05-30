@@ -1,77 +1,84 @@
 # Korean OCR Evaluation Framework
 
-한글 OCR 성능 평가를 위한 종합적인 프레임워크입니다.
+This repository provides a comprehensive framework for evaluating the performance of Korean OCR models.
 
-## 주요 기능
+## Key Features
 
-- 다양한 OCR 모델 지원
+- Support for multiple OCR models:
   - EasyOCR
-  - PaddleOCR
-  - Tesseract
-  - YOLO 기반 OCR
+  - PaddleOCR (Optional - requires successful installation)
+  - Tesseract (Planned)
+  - YOLO-based OCR (Planned)
 
-- 이미지 전처리 모듈
-  - 샤프닝
-  - 노이즈 제거
-  - 이진화
+- Modular image preprocessing steps:
+  - Sharpening
+  - Denoising
+  - Binarization
 
-- GPU/CPU 선택 가능
-- 다양한 평가 지표 제공
-- 실험 결과 저장 및 비교 분석
+- GPU/CPU support
+- Comprehensive evaluation metrics:
+  - Item Accuracy (Bounding box matching)
+  - Character Accuracy
+  - Inference Time
+  - Accuracy by Text Type
+  - Accuracy by Location (Top/Middle/Bottom)
+  - Accuracy by Text Length (Short/Medium/Long)
+  - Accuracy by Bounding Box Size (Small/Medium/Large)
+  - Text Similarity (Normalized Levenshtein, ROUGE, BLEU)
 
-## 설치 방법
+- Structured results saving (JSON files with sequential numbering)
+- Performance report generation (CSV files with sequential numbering)
 
-```bash
-pip install -r requirements.txt
-```
+## Setup
 
-## 사용 방법
+1. Clone the repository:
+   ```bash
+   git clone <repository_url>
+   cd kor-ocr-rag
+   ```
 
-1. 설정 파일 수정 (`configs/default_config.yaml`)
-   - 사용할 모델 선택
-   - 전처리 방법 선택
-   - GPU 사용 여부 설정
+2. Create and activate a virtual environment:
+   ```bash
+   python -m venv .venv
+   source .venv/bin/activate
+   ```
 
-2. OCR 실행
-```python
-from src.models import EasyOCRModel
-from src.preprocessing import SharpeningPreprocessor
+3. Install dependencies:
+   ```bash
+   pip install -r requirements.txt
+   ```
+   *Note: PaddleOCR installation can sometimes be tricky due to dependencies. If you encounter issues, the script is designed to skip PaddleOCR evaluation if the module is not available.*
 
-# 모델 초기화
-model = EasyOCRModel()
+## Usage
 
-# 전처리기 초기화
-preprocessor = SharpeningPreprocessor()
+1. Organize your data:
+   Place your test images in the directory specified by `data.test_dir` and corresponding label JSON files in `data.label_dir` in `configs/default_config.yaml`. The current structure expects images in `test_dir/images/...` and labels in `label_dir/labels/...`.
 
-# 이미지 처리
-result = model(preprocessor(image))
-```
+2. Configure your evaluation:
+   Modify `configs/default_config.yaml` to select the model(s), preprocessing steps, and hardware settings (GPU/CPU) you want to use.
 
-3. 성능 평가
-```python
-from src.evaluation import OCREvaluator
+3. Run the evaluation script:
+   ```bash
+   python src/run_evaluation.py
+   ```
+   This will perform the evaluation based on your configuration, save detailed results as JSON files with sequential numbering, and generate a performance report CSV file with sequential numbering in the `results/` directory.
 
-evaluator = OCREvaluator()
-metrics = evaluator.calculate_metrics(predictions, ground_truth)
-evaluator.save_results(metrics, config, model_name, preprocessing_steps)
-```
-
-## 프로젝트 구조
+## Project Structure
 
 ```
 kor-ocr-rag/
-├── data/                      # 데이터 폴더
+├── data/                      # Data folder (images, labels)
 ├── src/
-│   ├── models/               # OCR 모델 구현
-│   ├── preprocessing/        # 이미지 전처리 모듈
-│   ├── evaluation/          # 성능 평가 모듈
-│   └── utils/               # 유틸리티 함수
-├── tests/                   # 테스트 코드
-├── configs/                 # 설정 파일
-├── results/                 # 실험 결과 저장
-└── requirements.txt         # 의존성 패키지
+│   ├── models/               # OCR model implementations
+│   ├── preprocessing/        # Image preprocessing modules
+│   ├── evaluation/          # Performance evaluation module
+│   └── utils/               # Utility functions
+├── tests/                   # Test code
+├── configs/                 # Configuration files
+├── results/                 # Experiment results and reports
+└── requirements.txt         # Dependency packages
 ```
 
-## 라이선스
+## License
 
 MIT License 

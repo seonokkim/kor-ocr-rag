@@ -29,20 +29,28 @@ def convert_numpy_types(obj):
 def create_evaluation_config(
     model_name: str,
     preprocessing_steps: List[str],
-    use_gpu: bool = True
+    use_gpu: bool
 ) -> Dict[str, Any]:
-    """평가 설정을 생성합니다."""
-    # 현재 타임스탬프 (년월일시분초) 및 고유 식별자 생성
-    timestamp = time.strftime("%Y%m%d") # 일별 폴더 대신 파일명에 포함
-    # uuid = uuid.uuid4().hex[:6] # 짧은 고유 식별자
+    """Creates evaluation configuration.
+        
+    Args:
+        model_name (str): Name of the model being evaluated.
+        preprocessing_steps (List[str]): List of preprocessing steps applied.
+        use_gpu (bool): Whether GPU was used.
+        
+    Returns:
+        Dict[str, Any]: Evaluation configuration dictionary.
+    """
+    # Generate current timestamp (YYYYMMDD) for filename
+    timestamp = time.strftime("%Y%m%d")
     
-    # 전처리 단계 이름을 포함한 파일 이름 생성
+    # Generate filename based on model and preprocessing steps
     preprocess_name = "_".join(preprocessing_steps) if preprocessing_steps else "no_preprocess"
     
-    # 모델 이름과 전처리 이름을 조합하여 config 이름 생성
+    # Combine model name and preprocessing name for config name
     config_name = f"{timestamp}_{model_name}_{preprocess_name}"
     
-    # 설정 딕셔너리 생성
+    # Create config dictionary
     config = {
         'config_name': config_name,
         'model_name': model_name,
@@ -54,11 +62,19 @@ def create_evaluation_config(
     return config
 
 def get_next_result_number(model_name: str, preprocess_info: str) -> int:
-    """다음 결과 파일 번호를 생성합니다."""
+    """Generates the next result file number for a given model and preprocessing combo.
+        
+    Args:
+        model_name (str): Name of the model.
+        preprocess_info (str): Preprocessing information string.
+        
+    Returns:
+        int: The next sequential file number.
+    """
     results_dir = Path('results')
     results_dir.mkdir(exist_ok=True)
     
-    # 오늘 날짜의 파일 찾기
+    # Find files from today with the same model and preprocessing info
     today = time.strftime('%Y%m%d')
     pattern = f"{today}_{model_name}_{preprocess_info}_*.json"
     existing_files = list(results_dir.glob(pattern))
@@ -66,16 +82,20 @@ def get_next_result_number(model_name: str, preprocess_info: str) -> int:
     if not existing_files:
         return 1
     
-    # 가장 큰 번호 찾기
+    # Find the highest number
     numbers = [int(f.stem.split('_')[-1]) for f in existing_files]
     return max(numbers) + 1 if numbers else 1
 
 def get_next_report_number() -> int:
-    """다음 보고서 파일 번호를 생성합니다."""
+    """Generates the next performance report file number.
+        
+    Returns:
+        int: The next sequential file number.
+    """
     results_dir = Path('results')
     results_dir.mkdir(exist_ok=True)
     
-    # 오늘 날짜의 보고서 파일 찾기
+    # Find report files from today
     today = time.strftime('%Y%m%d')
     pattern = f"{today}_performance_report_*.csv"
     existing_files = list(results_dir.glob(pattern))
@@ -83,16 +103,21 @@ def get_next_report_number() -> int:
     if not existing_files:
         return 1
     
-    # 가장 큰 번호 찾기
+    # Find the highest number
     numbers = [int(f.stem.split('_')[-1]) for f in existing_files]
     return max(numbers) + 1 if numbers else 1
 
 def save_evaluation_results(results: Dict[str, Any], eval_config: Dict[str, Any]):
-    """평가 결과를 JSON 파일로 저장합니다."""
+    """Saves evaluation results to a JSON file.
+        
+    Args:
+        results (Dict[str, Any]): Dictionary containing evaluation results.
+        eval_config (Dict[str, Any]): Evaluation configuration dictionary.
+    """
     results_dir = "results"
     os.makedirs(results_dir, exist_ok=True)
     
-    # 파일 이름 생성: 타임스탬프_모델이름_전처리조합_순번.json
+    # Generate filename: timestamp_modelname_preprocessingcombo_sequence.json
     preprocess_tag = "_".join(eval_config['preprocessing_steps']) if eval_config['preprocessing_steps'] else "no_preprocess"
     today = time.strftime('%Y%m%d')
     next_num = get_next_result_number(eval_config['model_name'], preprocess_tag)
@@ -115,13 +140,17 @@ def save_evaluation_results(results: Dict[str, Any], eval_config: Dict[str, Any]
     print(f"Evaluation results saved to {filepath}")
 
 def load_all_results() -> Dict[str, Any]:
-    """results 디렉토리의 모든 평가 결과를 로드합니다."""
+    """Loads all evaluation results from the results directory.
+        
+    Returns:
+        Dict[str, Any]: Dictionary containing all loaded results.
+    """
     all_results = {}
     results_dir = "results"
     if not os.path.exists(results_dir):
         return all_results
     
-    # 모든 JSON 파일 검색 (하위 폴더는 현재 고려 안함)
+    # Search for all JSON files (currently not considering subfolders)
     json_files = glob.glob(os.path.join(results_dir, '*.json'))
     
     for filepath in json_files:
@@ -129,24 +158,22 @@ def load_all_results() -> Dict[str, Any]:
             with open(filepath, 'r', encoding='utf-8') as f:
                 result_data = json.load(f)
                 
-                # 파일 이름에서 설정 정보 추출 (예: 20231027_base_easyocr_sharpening_1.json)
+                # Extract config information from filename (e.g., 20231027_base_easyocr_sharpening_1.json)
                 filename = os.path.basename(filepath)
                 parts = filename.replace('.json', '').split('_')
                 
-                # 파일명 파싱 로직 개선 (타임스탬프_모델명_전처리조합) 필요
-                # 여기서는 간단히 filename을 키로 사용하여 중복 방지 및 관리를 쉽게 함
+                # Using filename as key for easy management and to prevent duplicates
                 config_key = filename
                 
-                # 메트릭 정보만 저장하고 설정 정보는 분리
+                # Separate metrics information from config information
                 metrics = result_data.get('metrics', {})
                 
-                # 설정 정보 (파일명에서 재구성 또는 파일 내부에 저장된 정보 사용)
-                # 파일 내부에 저장된 설정 정보가 더 정확하므로 그것을 사용
+                # Use config information stored within the file, fall back to filename parsing if needed
                 eval_config_from_file = {
                      'config_name': result_data.get('config', {}).get('config_name', filename),
                      'model_name': result_data.get('config', {}).get('model_name', parts[1] if len(parts) > 1 else 'unknown'),
-                     'preprocessing_steps': result_data.get('config', {}).get('preprocessing_steps', parts[2:-1] if len(parts) > 3 else []), # 파일명에서 추정
-                     'use_gpu': result_data.get('config', {}).get('use_gpu', False), # 기본값
+                     'preprocessing_steps': result_data.get('config', {}).get('preprocessing_steps', parts[2:-1] if len(parts) > 3 else []), # Estimate from filename
+                     'use_gpu': result_data.get('config', {}).get('use_gpu', False), # Default value
                      'timestamp': result_data.get('config', {}).get('timestamp', parts[0] if len(parts) > 0 else '')
                 }
                 
@@ -157,7 +184,7 @@ def load_all_results() -> Dict[str, Any]:
                 
         except Exception as e:
             print(f"Warning: Failed to load results from {filepath}: {e}")
-           
+            
     return all_results
 
 def plot_performance_comparison(df: pd.DataFrame, metric: str = 'item_accuracy'):
@@ -180,7 +207,14 @@ def plot_performance_comparison(df: pd.DataFrame, metric: str = 'item_accuracy')
     return plt
 
 def generate_performance_report(all_results: Dict[str, Any]) -> pd.DataFrame:
-    """평가 결과를 분석하여 성능 보고서를 생성하고 CSV로 저장합니다."""
+    """Analyzes evaluation results, generates a performance report, and saves it as CSV.
+        
+    Args:
+        all_results (Dict[str, Any]): Dictionary containing all loaded evaluation results.
+        
+    Returns:
+        pd.DataFrame: Pandas DataFrame containing the performance report.
+    """
     report_list = []
     
     for config_key, result_data in all_results.items():
@@ -195,14 +229,14 @@ def generate_performance_report(all_results: Dict[str, Any]) -> pd.DataFrame:
             'inference_time': metrics.get('inference_time', 0),
         }
         
-        # 상세 메트릭 추가
+        # Add detailed metrics
         for metric_type in ['type', 'region', 'length', 'size']:
             metric_key = f'{metric_type}_accuracies'
             if metric_key in metrics:
                 for k, v in metrics[metric_key].items():
                     row[f'average_{metric_type}_{k}'] = v
 
-        # Text Similarity 메트릭 추가
+        # Add Text Similarity metrics
         if 'text_similarity' in metrics:
             ts_metrics = metrics['text_similarity']
             row['average_normalized_levenshtein'] = ts_metrics.get('normalized_levenshtein', 0)
@@ -213,10 +247,10 @@ def generate_performance_report(all_results: Dict[str, Any]) -> pd.DataFrame:
         
         report_list.append(row)
     
-    # DataFrame 생성
+    # Create DataFrame
     df = pd.DataFrame(report_list)
     
-    # CSV 파일로 저장
+    # Save to CSV file
     results_dir = 'results'
     today = time.strftime('%Y%m%d')
     next_num = get_next_report_number()
