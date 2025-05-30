@@ -1,0 +1,38 @@
+# Model Configuration
+models:
+  available:
+    - tesseract
+    - easyocr
+    - paddleocr
+    - yolo_ocr
+  selected: "easyocr"  # Default model
+
+# Preprocessing Configuration
+preprocessing:
+  available:
+    - sharpening
+    - denoising
+    - binarization
+  selected: []  # Empty list means no preprocessing
+
+# Hardware Configuration
+hardware:
+  use_gpu: true
+  device: "cuda"  # or "cpu"
+
+# Evaluation Configuration
+evaluation:
+  metrics:
+    - accuracy
+    - precision
+    - recall
+    - f1_score
+  save_results: true
+  results_dir: "results"
+  save_visualizations: true
+
+# Data Configuration
+data:
+  train_dir: "data/train"
+  test_dir: "data/test"
+  val_dir: "data/val" 
