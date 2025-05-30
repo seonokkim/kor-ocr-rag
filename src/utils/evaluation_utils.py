@@ -70,14 +70,33 @@ def get_next_result_number(model_name: str, preprocess_info: str) -> int:
     numbers = [int(f.stem.split('_')[-1]) for f in existing_files]
     return max(numbers) + 1 if numbers else 1
 
+def get_next_report_number() -> int:
+    """다음 보고서 파일 번호를 생성합니다."""
+    results_dir = Path('results')
+    results_dir.mkdir(exist_ok=True)
+    
+    # 오늘 날짜의 보고서 파일 찾기
+    today = time.strftime('%Y%m%d')
+    pattern = f"{today}_performance_report_*.csv"
+    existing_files = list(results_dir.glob(pattern))
+    
+    if not existing_files:
+        return 1
+    
+    # 가장 큰 번호 찾기
+    numbers = [int(f.stem.split('_')[-1]) for f in existing_files]
+    return max(numbers) + 1 if numbers else 1
+
 def save_evaluation_results(results: Dict[str, Any], eval_config: Dict[str, Any]):
     """평가 결과를 JSON 파일로 저장합니다."""
     results_dir = "results"
     os.makedirs(results_dir, exist_ok=True)
     
-    # 파일 이름 생성: 모델이름_전처리조합_타임스탬프.json
+    # 파일 이름 생성: 타임스탬프_모델이름_전처리조합_순번.json
     preprocess_tag = "_".join(eval_config['preprocessing_steps']) if eval_config['preprocessing_steps'] else "no_preprocess"
-    filename = f"{eval_config['timestamp']}_{eval_config['model_name']}_{preprocess_tag}_1.json" # _1은 추후 여러번 실행시 인덱스 추가 고려
+    today = time.strftime('%Y%m%d')
+    next_num = get_next_result_number(eval_config['model_name'], preprocess_tag)
+    filename = f"{today}_{eval_config['model_name']}_{preprocess_tag}_{next_num}.json"
     filepath = os.path.join(results_dir, filename)
     
     # Convert numpy types in metrics and predictions before saving
@@ -115,10 +134,7 @@ def load_all_results() -> Dict[str, Any]:
                 parts = filename.replace('.json', '').split('_')
                 
                 # 파일명 파싱 로직 개선 (타임스탬프_모델명_전처리조합) 필요
-                # 여기서는 간단히 filename을 키로 사용
-                
-                # 설정 정보와 결과 분리
-                # filename 자체를 키로 사용하여 중복 방지 및 관리를 쉽게 함
+                # 여기서는 간단히 filename을 키로 사용하여 중복 방지 및 관리를 쉽게 함
                 config_key = filename
                 
                 # 메트릭 정보만 저장하고 설정 정보는 분리
@@ -163,7 +179,7 @@ def plot_performance_comparison(df: pd.DataFrame, metric: str = 'item_accuracy')
     plt.tight_layout()
     return plt
 
-def generate_performance_report(all_results: Dict[str, Any]) -> Dict[str, Any]:
+def generate_performance_report(all_results: Dict[str, Any]) -> pd.DataFrame:
     """평가 결과를 분석하여 성능 보고서를 생성하고 CSV로 저장합니다."""
     report_list = []
     
@@ -201,11 +217,12 @@ def generate_performance_report(all_results: Dict[str, Any]) -> Dict[str, Any]:
     df = pd.DataFrame(report_list)
     
     # CSV 파일로 저장
-    report_filepath = os.path.join('results', 'performance_report.csv')
+    results_dir = 'results'
+    today = time.strftime('%Y%m%d')
+    next_num = get_next_report_number()
+    report_filepath = os.path.join(results_dir, f"{today}_performance_report_{next_num}.csv")
     df.to_csv(report_filepath, index=False, encoding='utf-8')
     
     print(f"Performance report saved to {report_filepath}")
 
-    # 기존 딕셔너리 형식 보고서도 반환 (필요시)
-    # 여기서는 간단히 DataFrame을 반환하거나 None을 반환하도록 수정
-    return df # 또는 None 
+    return df 
